@@ -1,0 +1,20 @@
+[servers]
+10.27.112.211 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.212 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.213 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.214 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.215 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+
+[loadbalancers]
+lhlAnsibleUbuntu6 ansible_host=10.27.112.216 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[mysql]
+10.27.112.95 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.96 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.97 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.98 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+10.27.112.99 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[mysqlrouters]
+10.27.112.224 ansible_ssh_common_args='-o StrictHostKeyChecking=no'

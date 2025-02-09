@@ -1,0 +1,228 @@
+---
+- name: Deploy Stirling PDF service and install Wazuh agent
+  hosts: servers
+  become: yes
+  tasks:
+
+    - name: Disable SSH host key checking
+      set_fact:
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+    - name: Install NFS client utilities
+      apt:
+        name: nfs-common
+        state: present
+      tags: nfs
+
+    - name: Manually download and add Docker's GPG key
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+      ignore_errors: yes
+
+    - name: Set up Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      ignore_errors: yes
+
+    - name: Install Docker and Docker Compose
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      ignore_errors: yes
+
+    - name: Ensure Docker service is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ensure NFS share is mounted at /bhdata
+      mount:
+        path: /bhdata
+        src: 10.27.112.209:/export/bhdata
+        fstype: nfs
+        opts: rw,resvport,timeo=14
+        state: mounted
+
+    - name: Ensure necessary directories exist in /srv/compose/stirling-pdf
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /srv/compose/stirling-pdf
+
+    - name: Stop and remove any existing container using port 5349
+      shell: |
+        docker ps -q --filter "publish=5349" | xargs -r docker stop
+        docker ps -a -q --filter "publish=5349" | xargs -r docker rm
+      ignore_errors: true
+
+    - name: Create Docker Compose file for Stirling PDF
+      copy:
+        dest: /srv/compose/stirling-pdf/docker-compose.yml
+        content: |
+          version: '3.3'
+          services:
+            stirling-pdf:
+              image: frooodle/s-pdf:latest
+              ports:
+                - '5349:8080'
+              volumes:
+                - /bhdata/DOCKER/stirling-pdf/configs:/configs
+                - /bhdata/DOCKER/stirling-pdf/logs:/logs
+                - /bhdata/DOCKER/stirling-pdf/data:/data
+              environment:
+                DOCKER_ENABLE_SECURITY: 'false'
+                INSTALL_BOOK_AND_ADVANCED_HTML_OPS: 'false'
+                LANGS: 'en_US'
+                UI_APP_NAME: Linux Home Labs - Stirling PDF
+                UI_HOME_DESCRIPTION: Distributed Load Balanaced PDF Utility
+                APP_NAVBAR_NAME: LHL-STIRLING-PDF
+              restart: unless-stopped
+
+    - name: Start Stirling PDF service using Docker Compose
+      shell: docker compose -f /srv/compose/stirling-pdf/docker-compose.yml up -d
+      args:
+        chdir: /srv/compose/stirling-pdf
+
+    # Watchtower deployment
+    - name: Ensure necessary directories exist for Watchtower
+      file:
+        path: /srv/compose/watchtower
+        state: directory
+        mode: '0755'
+
+    - name: Copy Docker Compose file for Watchtower to the target directory
+      copy:
+        dest: /srv/compose/watchtower/watchtower-compose.yml
+        content: |
+          version: "3"
+
+          services:
+            watchtower:
+              container_name: watchtower
+              restart: always
+              environment:
+                WATCHTOWER_SCHEDULE: 30 4 * * *
+                TZ: America/Los_Angeles
+                WATCHTOWER_CLEANUP: "true"
+                WATCHTOWER_DEBUG: "true"
+                WATCHTOWER_NOTIFICATIONS: email
+                WATCHTOWER_NOTIFICATION_EMAIL_FROM: evan@evanwilliammiller.com
+                WATCHTOWER_NOTIFICATION_EMAIL_TO: evan@certifiedmactech.com
+                WATCHTOWER_NOTIFICATION_EMAIL_SERVER: smtp.gmail.com
+                WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT: 465
+                WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER: evan@evanwilliammiller.com
+                WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD: qvpirlgkglnlojeu
+
+              image: containrrr/watchtower
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+
+    - name: Run Docker Compose up for Watchtower
+      shell: docker compose -f /srv/compose/watchtower/watchtower-compose.yml up -d
+      args:
+        chdir: /srv/compose/watchtower/
+
+    # Docuseal installation
+    - name: Create DocuSeal Docker Compose directory
+      file:
+        path: /srv/compose/docuseal
+        state: directory
+        mode: '0755'
+
+    - name: Deploy DocuSeal Docker Compose configuration
+      copy:
+        dest: /srv/compose/docuseal/docker-compose.yml
+        content: |
+          version: '3'
+
+          services:
+            app:
+              image: docuseal/docuseal:latest
+              ports:
+                - "3555:3000"
+              volumes:
+                - /bhdata/DOCKER/lhldocuseal/data:/data
+              environment:
+                - DATABASE_URL=postgresql://docuseal:Q4peVDVDq-FD@10.27.112.218:5432/docusealdb
+                - HOST=docuseal.linuxhomelabs.net
+              restart: always
+
+    - name: Start DocuSeal service using Docker Compose
+      shell: docker compose up -d
+      args:
+        chdir: /srv/compose/docuseal/
+
+    # Wazuh agent installation and configuration
+    - name: Map IP addresses to hostnames
+      set_fact:
+        hostname_mapping:
+          10.27.112.211: "lhlAnsibleUbuntu1"
+          10.27.112.212: "lhlAnsibleUbuntu2"
+          10.27.112.213: "lhlAnsibleUbuntu3"
+          10.27.112.214: "lhlAnsibleUbuntu4"
+          10.27.112.215: "lhlAnsibleUbuntu5"
+
+    - name: Set the correct hostname using hostnamectl
+      command: hostnamectl set-hostname "{{ hostname_mapping[ansible_host] }}"
+
+    - name: Update /etc/hostname with the correct hostname
+      copy:
+        content: "{{ hostname_mapping[ansible_host] }}\n"
+        dest: /etc/hostname
+
+    - name: Ensure /etc/hosts has the correct hostname
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1 {{ hostname_mapping[ansible_host] }}"
+        state: present
+
+    - name: Reboot the server to apply hostname changes
+      reboot:
+        reboot_timeout: 300
+
+    - name: Verify hostname is set correctly
+      command: hostname
+      register: hostname_output
+
+    - name: Assert hostname matches expected value
+      assert:
+        that:
+          - hostname_output.stdout == hostname_mapping[ansible_host]
+        fail_msg: "Hostname does not match expected value {{ hostname_mapping[ansible_host] }}."
+        success_msg: "Hostname is correctly set to {{ hostname_mapping[ansible_host] }}."
+
+    - name: Download Wazuh agent
+      shell: wget https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.9.0-1_amd64.deb
+      args:
+        executable: /bin/bash
+
+    - name: Validate the Wazuh agent package
+      stat:
+        path: wazuh-agent_4.9.0-1_amd64.deb
+      register: wazuh_agent_deb_stat
+
+    - name: Fail if Wazuh agent download failed
+      fail:
+        msg: "Wazuh agent download failed. The .deb file is not valid."
+      when: wazuh_agent_deb_stat.stat.size < 1024  # Assuming the file is larger than 1KB if valid
+
+    - name: Install Wazuh agent
+      shell: sudo WAZUH_MANAGER='10.27.112.225' WAZUH_AGENT_NAME='{{ hostname_mapping[ansible_host] }}' dpkg -i ./wazuh-agent_4.9.0-1_amd64.deb
+      args:
+        executable: /bin/bash
+      register: wazuh_install
+      changed_when: "'WAZUH_AGENT_NAME' in wazuh_install.stdout"
+
+    - name: Reload systemd daemon
+      shell: systemctl daemon-reload
+      args:
+        warn: false

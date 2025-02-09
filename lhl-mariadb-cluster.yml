@@ -1,0 +1,181 @@
+---
+- name: Set up MariaDB InnoDB Cluster and MaxScale
+  hosts: mysql
+  become: true
+  vars_files:
+    - /home/pi/ansible/vars.yml  # Corrected vars.yml location
+
+  tasks:
+    - name: Ensure Python is installed
+      apt:
+        name: python3
+        state: present
+
+    - name: Ensure necessary packages for MariaDB are installed
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - mariadb-server
+        - mariadb-client
+        - python3-pymysql
+
+    - name: Start and enable MariaDB service
+      systemd:
+        name: mariadb
+        state: started
+        enabled: true
+
+    - name: Set root password and remove anonymous users
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: root
+        host_all: true
+        password: "{{ vault_mysql_password }}"
+        state: present
+        priv: "*.*:ALL,GRANT"
+        append_privs: true
+
+    - name: Create admin user with all privileges
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ admin_user }}"
+        password: "{{ admin_password }}"
+        host: "%"
+        priv: "*.*:ALL,GRANT"
+        state: present
+
+    - name: Grant global privileges (SHOW DATABASES, REPLICATION CLIENT, etc.) to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "*.*:SHOW DATABASES, REPLICATION CLIENT, SLAVE MONITOR, PROCESS, SUPER"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.user to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.user:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.db to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.db:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.tables_priv to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.tables_priv:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.columns_priv to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.columns_priv:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.proxies_priv to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.proxies_priv:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Grant SELECT on mysql.roles_mapping to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.roles_mapping:SELECT"
+        state: present
+        append_privs: yes
+
+    - name: Ensure SELECT on mysql.procs_priv is granted to router user
+      mysql_user:
+        login_user: root
+        login_password: "{{ vault_mysql_password }}"
+        name: "{{ router_user }}"
+        password: "{{ router_password }}"
+        host: "%"
+        priv: "mysql.procs_priv:SELECT"
+        state: present
+        append_privs: yes
+
+- name: Set up MariaDB MaxScale
+  hosts: mysqlrouters
+  become: true
+  vars_files:
+    - /home/pi/ansible/vars.yml  # Corrected vars.yml location
+
+  tasks:
+    - name: Debug variables
+      debug:
+        var: "{{ item }}"
+      loop:
+        - vault_mysql_password
+        - admin_user
+        - admin_password
+        - router_user
+        - router_password
+
+    - name: Install necessary dependencies
+      apt:
+        name: wget
+        state: present
+
+    - name: Use MariaDB setup script to configure MaxScale repository and key
+      shell: curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash
+
+    - name: Update APT cache
+      apt:
+        update_cache: yes
+
+    - name: Install MariaDB MaxScale
+      apt:
+        name: maxscale
+        state: present
+
+    - name: Configure MaxScale
+      template:
+        src: /home/pi/ansible/playbooks/templates/maxscale.cnf.j2
+        dest: /etc/maxscale.cnf
+
+    - name: Start and enable MaxScale service
+      systemd:
+        name: maxscale
+        state: started
+        enabled: true

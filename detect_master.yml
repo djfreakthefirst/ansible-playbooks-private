@@ -1,0 +1,15 @@
+---
+- name: Detect the current master node
+  hosts: mysqlrouters
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Get the current master from MaxScale
+      shell: maxctrl list servers --tsv | grep "Master, Running" | cut -f2
+      register: current_master_ip
+      delegate_to: localhost
+
+    - name: Add current master IP to inventory
+      add_host:
+        name: current_master
+        ansible_host: "{{ current_master_ip.stdout }}"

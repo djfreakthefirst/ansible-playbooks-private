@@ -1,0 +1,134 @@
+---
+- name: Add SSH keys to known_hosts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ensure known_hosts entry exists for each host in known_hosts.d
+      shell: "ssh-keyscan -H {{ hostvars[item].ansible_host }} >> /root/.ssh/known_hosts.d/{{ hostvars[item].ansible_host }}"
+      with_items: "{{ groups['servers'] }}"
+      become: yes
+      ignore_errors: yes
+
+- name: Install tools, configure NFS mount, and configure Postfix
+  hosts: all
+  become: yes
+  tasks:
+    - name: Remove conflicting bacula-console-qt package
+      apt:
+        name: bacula-console-qt
+        state: absent
+      ignore_errors: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Ensure bmon is installed
+      apt:
+        name: bmon
+        state: present
+
+    - name: Ensure neofetch is installed
+      apt:
+        name: neofetch
+        state: present
+
+    - name: Ensure btop is installed
+      apt:
+        name: btop
+        state: present
+
+    - name: Ensure batcat (command-line tool) is installed
+      apt:
+        name: bat
+        state: present
+
+    - name: Ensure nfs-common is installed
+      apt:
+        name: nfs-common
+        state: present
+
+    - name: Skip directory task if /bhdata is an NFS mount
+      shell: |
+        if mountpoint -q /bhdata; then
+          exit 0
+        else
+          exit 1
+        fi
+      register: bhdata_mount_check
+      ignore_errors: true
+
+    - name: Ensure /bhdata directory exists if not an NFS mount
+      file:
+        path: /bhdata
+        state: directory
+        mode: '0755'
+      when: bhdata_mount_check.rc != 0
+      ignore_errors: yes
+
+    - name: Add NFS mount to /etc/fstab
+      lineinfile:
+        path: /etc/fstab
+        line: "10.27.112.209:/export/bhdata /bhdata nfs rw,resvport,timeo=14 0 0"
+        create: yes
+
+    - name: Mount all filesystems mentioned in fstab
+      command: mount -a
+
+    - name: Install Postfix and Postfix Utilities
+      apt:
+        name:
+          - postfix
+          - mailutils
+        state: present
+
+    - name: Configure Postfix main.cf
+      blockinfile:
+        path: /etc/postfix/main.cf
+        block: |
+          relayhost = [smtp.gmail.com]:587
+          smtp_sasl_auth_enable = yes
+          smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+          smtp_sasl_security_options = noanonymous
+          smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+          smtp_use_tls = yes
+      notify: Restart Postfix
+
+    - name: Set Postfix SMTP credentials in sasl_passwd
+      copy:
+        dest: /etc/postfix/sasl_passwd
+        content: |
+          [smtp.gmail.com]:587 evan@certifiedmactech.com:xbmm uzpz tnjj pwbm
+
+    - name: Verify sasl_passwd file creation
+      stat:
+        path: /etc/postfix/sasl_passwd
+      register: sasl_passwd_file
+
+    - name: Fail if sasl_passwd file is not found
+      fail:
+        msg: "sasl_passwd file was not created!"
+      when: not sasl_passwd_file.stat.exists
+
+    - name: Hash the Postfix sasl_passwd file
+      command: postmap /etc/postfix/sasl_passwd
+      when: sasl_passwd_file.stat.exists
+      notify: Restart Postfix
+
+    - name: Set permissions on sasl_passwd file
+      file:
+        path: /etc/postfix/sasl_passwd
+        mode: '0600'
+      when: sasl_passwd_file.stat.exists
+
+    - name: Set permissions on sasl_passwd.db file
+      file:
+        path: /etc/postfix/sasl_passwd.db
+        mode: '0600'
+      when: sasl_passwd_file.stat.exists
+
+  handlers:
+    - name: Restart Postfix
+      service:
+        name: postfix
+        state: restarted

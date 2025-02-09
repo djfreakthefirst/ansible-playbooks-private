@@ -1,0 +1,18 @@
+- name: Update macOS and restart
+  hosts: sagan
+  become: yes
+  tasks:
+    - name: Install available macOS updates
+      ansible.builtin.command:
+        cmd: "softwareupdate -i -a"
+      register: update_result
+      changed_when: "'No updates are available' not in update_result.stdout"
+
+    - name: Display update output
+      ansible.builtin.debug:
+        var: update_result.stdout_lines
+
+    - name: Reboot the Mac
+      ansible.builtin.command:
+        cmd: "sudo shutdown -r now"
+      when: "'No updates are available' not in update_result.stdout"

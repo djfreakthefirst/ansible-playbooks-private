@@ -1,0 +1,26 @@
+---
+- name: Configure replication on all slaves
+  hosts: mysql
+  become: true
+  gather_facts: false
+  vars_files:
+    - /home/pi/ansible/vars.yml  # Load variables from the specified file
+
+  tasks:
+    - name: Stop MySQL replication on all nodes
+      mysql_replication:
+        mode: stopreplica  # Corrected to use the appropriate value
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ vault_mysql_password }}"
+
+    - name: Configure replication to point to the current master
+      shell: |
+        mysql -u {{ mysql_user }} -p{{ vault_mysql_password }} -e "CHANGE MASTER TO MASTER_HOST='{{ hostvars['current_master']['ansible_host'] }}', MASTER_USER='replica', MASTER_PASSWORD='LxrZHX_GgH9_G2', MASTER_USE_GTID=current_pos;"
+      when: inventory_hostname != "current_master"
+
+    - name: Start MySQL replication on all nodes except the master
+      mysql_replication:
+        mode: startreplica  # Corrected to use the appropriate value
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ vault_mysql_password }}"
+      when: inventory_hostname != "current_master"

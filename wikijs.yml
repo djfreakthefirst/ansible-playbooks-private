@@ -1,0 +1,53 @@
+---
+- name: Deploy Wiki.js service using Docker Compose
+  hosts: servers
+  become: true
+  tasks:
+    - name: Ensure /srv/compose/lhlwikijs/ directory exists
+      file:
+        path: /srv/compose/lhlwikijs
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy Wiki.js Docker Compose file to /srv/compose/lhlwikijs/docker-compose.yml
+      copy:
+        dest: /srv/compose/lhlwikijs/docker-compose.yml
+        content: |
+          version: '3'
+
+          services:
+            wikijs:
+              image: requarks/wiki:latest
+              container_name: wikijs
+              restart: always
+              ports:
+                - "3673:3000"
+              environment:
+                DB_TYPE: mariadb
+                DB_HOST: 10.27.112.224
+                DB_PORT: 3306
+                DB_USER: wikijs
+                DB_PASS: n!Qa7U_giB7Epd
+                DB_NAME: wikidb
+
+              volumes:
+                # Map the Wiki.js content directory to the NFS share
+                - /bhdata/DOCKER/lhlwikijs/data:/wiki/data
+                - /bhdata/DOCKER/lhlwikijs/wiki-content:/app/data
+
+          networks:
+            wikinet:
+              driver: bridge
+
+    - name: Bring up Wiki.js service using Docker Compose
+      command: docker-compose up -d
+      args:
+        chdir: /srv/compose/lhlwikijs
+
+    - name: Ensure Wiki.js service is running
+      docker_container:
+        name: wikijs
+        state: started
+        restart_policy: always

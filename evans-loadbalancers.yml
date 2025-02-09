@@ -1,0 +1,147 @@
+---
+- name: Distribute playbook to load balancers and set up Nginx
+  hosts: loadbalancers
+  become: yes
+  tasks:
+
+    - name: Add SSH keys to known_hosts for load balancers
+      shell: "ssh-keyscan -H {{ hostvars[item].ansible_host }} >> /root/.ssh/known_hosts"
+      with_items: "{{ groups['loadbalancers'] }}"
+      ignore_errors: yes
+
+    - name: Check for running dpkg process and terminate it
+      shell: |
+        pgrep -f dpkg && pkill -f dpkg || echo "No dpkg process found"
+      ignore_errors: yes
+
+    - name: Check for running apt process and terminate it
+      shell: |
+        pgrep -f apt && pkill -f apt || echo "No apt process found"
+      ignore_errors: yes
+
+    - name: Wait for dpkg lock release
+      shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other package management processes to finish..."
+          sleep 3
+        done
+
+    - name: Ensure Docker is installed and up-to-date
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+
+    - name: Install Docker Compose (legacy method)
+      shell: |
+        curl -L "https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+      args:
+        executable: /bin/bash
+
+    - name: Restart Docker service
+      service:
+        name: docker
+        state: restarted
+
+    - name: Ensure /srv/compose directory exists
+      file:
+        path: /srv/compose
+        state: directory
+        mode: '0755'
+
+    - name: Create Nginx Docker Compose file
+      copy:
+        dest: /srv/compose/nginx-loadbalancer-compose.yml
+        content: |
+          version: '3'
+          services:
+            nginx:
+              image: nginx:latest
+              environment:
+                - TZ=America/Los_Angeles
+              ports:
+                - "5349:5349"
+                - "3673:3673"  # Added port for Wiki.js
+              volumes:
+                - /srv/compose/nginx.conf:/etc/nginx/nginx.conf:ro
+              restart: unless-stopped
+
+    - name: Create Nginx configuration file
+      copy:
+        dest: /srv/compose/nginx.conf
+        content: |
+          user  nginx;
+          worker_processes  auto;
+
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              log_format  main  '$remote_addr - $remote_user [$time_iso8601] "$request" '
+                                '$status $body_bytes_sent "$http_referer" '
+                                '"$http_user_agent" "$http_x_forwarded_for" '
+                                'to: $upstream_addr status: $upstream_status';
+              access_log  /var/log/nginx/access.log  main;
+              
+              error_log  /var/log/nginx/error.log;
+
+              include       /etc/nginx/mime.types;
+              default_type  application/octet-stream;
+
+              sendfile        on;
+              keepalive_timeout  35;
+
+              # Stirling PDF upstream block
+              upstream stirling_pdf_backend {
+                  server 10.27.112.211:5349;
+                  server 10.27.112.212:5349;
+                  server 10.27.112.213:5349;
+                  server 10.27.112.214:5349;
+                  server 10.27.112.215:5349;
+                  server 10.30.0.3:5349;
+              }
+
+              # Wiki.js upstream block
+              upstream wikijs_backend {
+                  server 10.27.112.211:3673;
+                  server 10.27.112.212:3673;
+                  server 10.27.112.213:3673;
+                  server 10.27.112.214:3673;
+                  server 10.27.112.215:3673;
+              }
+
+              # Stirling PDF service block
+              server {
+                  listen       5349;
+                  server_name  localhost;
+
+                  location / {
+                      proxy_pass http://stirling_pdf_backend;
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto $scheme;
+                  }
+              }
+
+              # Wiki.js service block
+              server {
+                  listen       3673;
+                  server_name  localhost;
+
+                  location / {
+                      proxy_pass http://wikijs_backend;
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto $scheme;
+                  }
+              }
+          }
+
+    - name: Start Nginx load balancer with Docker Compose
+      command: docker-compose -f /srv/compose/nginx-loadbalancer-compose.yml up -d
+      args:
+        chdir: /srv/compose/

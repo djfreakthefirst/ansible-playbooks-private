@@ -1,0 +1,59 @@
+# MaxScale Global Section
+[MaxScale]
+threads=auto
+
+# Service Section - Routing configuration
+[service]
+type=service
+router=readwritesplit
+servers=server1,server2,server3,server4,server5
+user=mysql_router_user
+password=QCpx.4bbhbB-is
+max_slave_connections=100
+
+# Servers Section - Defining all MySQL nodes in the cluster
+[server1]
+type=server
+address=10.27.112.95
+port=3306
+protocol=MariaDBBackend
+
+[server2]
+type=server
+address=10.27.112.96
+port=3306
+protocol=MariaDBBackend
+
+[server3]
+type=server
+address=10.27.112.97
+port=3306
+protocol=MariaDBBackend
+
+[server4]
+type=server
+address=10.27.112.98
+port=3306
+protocol=MariaDBBackend
+
+[server5]
+type=server
+address=10.27.112.99
+port=3306
+protocol=MariaDBBackend
+
+# Monitor Section - To monitor the status of the servers
+[Monitor]
+type=monitor
+module=mariadbmon
+servers=server1,server2,server3,server4,server5
+user=mysql_router_user
+password=QCpx.4bbhbB-is
+monitor_interval=2000ms
+
+# Listeners Section - MaxScale listens on port 3306
+[listener-service]
+type=listener
+service=service
+protocol=MariaDBClient
+port=3306

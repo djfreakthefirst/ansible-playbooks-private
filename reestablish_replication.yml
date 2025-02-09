@@ -1,0 +1,114 @@
+---
+
+- name: Synchronize Slaves with Master
+  hosts: mysql
+  become: yes
+  gather_facts: no
+  vars_files:
+    - /home/pi/ansible/vars.yml
+  vars:
+    master_ip: 10.27.112.95
+    dump_file: /tmp/master_dump.sql
+
+  tasks:
+
+    - name: Dump Master's Data
+      when: inventory_hostname == master_ip
+      shell: |
+        mysqldump -u root -p'{{ vault_mysql_root_password }}' --all-databases --single-transaction --master-data=2 --gtid --flush-logs > {{ dump_file }}
+      run_once: true
+
+    - name: Copy Dump to Slaves
+      when: inventory_hostname != master_ip
+      copy:
+        src: "{{ dump_file }}"
+        dest: "{{ dump_file }}"
+      delegate_to: "{{ master_ip }}"
+      run_once: true
+
+    - name: Stop MariaDB Service on Slaves
+      when: inventory_hostname != master_ip
+      systemd:
+        name: mariadb
+        state: stopped
+        daemon_reload: yes
+        timeout: 30
+
+    - name: Force kill MariaDB processes on Slaves
+      when: inventory_hostname != master_ip
+      shell: |
+        pkill -9 -u mysql || true
+      ignore_errors: yes
+
+    - name: Remove Existing Data on Slaves
+      when: inventory_hostname != master_ip
+      file:
+        path: /var/lib/mysql
+        state: absent
+        force: yes
+
+    - name: Create Fresh Data Directory on Slaves
+      when: inventory_hostname != master_ip
+      file:
+        path: /var/lib/mysql
+        state: directory
+        owner: mysql
+        group: mysql
+        mode: '0755'
+
+    - name: Initialize MariaDB Data Directory on Slaves
+      when: inventory_hostname != master_ip
+      shell: |
+        mysql_install_db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
+
+    - name: Start MariaDB Service on Slaves
+      when: inventory_hostname != master_ip
+      systemd:
+        name: mariadb
+        state: started
+        daemon_reload: yes
+
+    - name: Import Master's Data on Slaves
+      when: inventory_hostname != master_ip
+      shell: |
+        mysql -u root -p'{{ vault_mysql_root_password }}' < {{ dump_file }}
+
+    - name: Reset Slave Configuration
+      when: inventory_hostname != master_ip
+      mysql_replication:
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ vault_mysql_password }}"
+        mode: reset_slave_all
+
+    - name: Configure Replication on Slaves
+      when: inventory_hostname != master_ip
+      mysql_replication:
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ vault_mysql_password }}"
+        master_host: "{{ master_ip }}"
+        master_user: "{{ replica_user }}"
+        master_password: "{{ replica_user_password }}"
+        master_use_gtid: slave_pos
+        mode: change_master
+
+    - name: Start Slave Replication
+      when: inventory_hostname != master_ip
+      mysql_replication:
+        login_user: "{{ mysql_user }}"
+        login_password: "{{ vault_mysql_password }}"
+        mode: start_slave
+
+    - name: Verify Replication Status
+      when: inventory_hostname != master_ip
+      shell: |
+        mysql -u root -p'{{ vault_mysql_root_password }}' -e "SHOW SLAVE STATUS\G;"
+      register: slave_status
+
+    - name: Fail if Replication is Not Running
+      when:
+        - inventory_hostname != master_ip
+        - "'Slave_IO_Running: Yes' not in slave_status.stdout"
+        - "'Slave_SQL_Running: Yes' not in slave_status.stdout"
+      fail:
+        msg: "Replication is not running correctly on {{ inventory_hostname }}. Status: {{ slave_status.stdout }}"
+
