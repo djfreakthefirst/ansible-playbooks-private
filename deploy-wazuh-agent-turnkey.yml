@@ -13,6 +13,7 @@
           10.27.112.14: "LHLRedmine"
           10.27.112.33: "LHLInvoiceninja"
           10.27.112.233: "watchyourlan"
+          10.27.112.17: "bhextcloud"
 
     - name: Set the correct hostname using hostnamectl
       command: hostnamectl set-hostname "{{ hostname_mapping[ansible_host] }}"
