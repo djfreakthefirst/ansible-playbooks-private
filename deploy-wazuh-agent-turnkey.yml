@@ -14,6 +14,7 @@
           10.27.112.33: "LHLInvoiceninja"
           10.27.112.233: "watchyourlan"
           10.27.112.17: "bhnextcloud"
+          10.27.112.218: "LHLCasaOS"
 
     - name: Set the correct hostname using hostnamectl
       command: hostnamectl set-hostname "{{ hostname_mapping[ansible_host] }}"
