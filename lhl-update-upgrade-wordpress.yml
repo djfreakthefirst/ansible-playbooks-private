@@ -1,0 +1,96 @@
+---
+- name: Update, upgrade, and reboot servers
+  hosts: all
+  become: yes
+  serial: 1
+  vars:
+    email_body: ""
+
+  tasks:
+
+    - name: Pause to avoid simultaneous updates
+      pause:
+        seconds: "{{ 30 | random(seed=inventory_hostname) }}"
+
+    - name: Install unattended-upgrades if not already installed
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Ensure unattended-upgrades is configured correctly
+      copy:
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+              "${distro_id}:${distro_codename}-updates";
+              "${distro_id}:${distro_codename}-proposed";
+              "${distro_id}:${distro_codename}-backports";
+          };
+          Unattended-Upgrade::Package-Blacklist {
+              // "vim";
+          };
+          Unattended-Upgrade::Mail "root";
+          Unattended-Upgrade::MailOnlyOnError "true";
+          Unattended-Upgrade::Automatic-Reboot "true";
+          Unattended-Upgrade::Automatic-Reboot-Time "02:00";
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Update apt package list
+      apt:
+        update_cache: yes
+
+    - name: Install kernel and cloud-init updates on Ubuntu servers
+      apt:
+        name:
+          - linux-generic
+          - cloud-init
+        state: latest
+        force_apt_get: yes
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Install kernel and cloud-init updates on Debian servers
+      apt:
+        name:
+          - linux-image-amd64
+          - cloud-init
+        state: latest
+        force_apt_get: yes
+      when: ansible_distribution == "Debian"
+
+    - name: Ensure ubuntu-pro packages are upgraded on Ubuntu servers
+      apt:
+        name:
+          - ubuntu-pro-client
+          - ubuntu-pro-client-l10n
+        state: latest
+        force_apt_get: yes
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Reboot the server, except for the load balancer
+      reboot:
+        msg: "Reboot initiated by Ansible after update and upgrade"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+      when: inventory_hostname != 'lhlAnsibleUbuntu6'
+
+    - name: Build email body with results
+      set_fact:
+        email_body: "{{ email_body }}\n{{ item.item.name }}: {{ item.stdout_lines | join(' ') }}"
+      with_items: "{{ ansible_facts.packages | dict2items }}"
+      when: item.stdout_lines is defined
+
+#- name: Restart Docker service on specific servers
+#  hosts: servers
+#  become: yes
+#
+#  tasks:
+#    - name: Restart Docker service
+#      ansible.builtin.systemd:
+#        name: docker
+#        state: restarted
+#        enabled: yes

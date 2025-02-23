@@ -1,0 +1,75 @@
+---
+- name: Wazuh agent installation and configuration
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Map IP addresses to hostnames
+      set_fact:
+        hostname_mapping:
+          10.27.112.50: "lxcwp1"
+          10.27.112.51: "lxcwp2"
+          10.27.112.52: "lxcwp3"
+          10.27.112.53: "lxcwp4"
+          10.27.112.54: "lxcwp5"
+          10.27.112.55: "lxcwp6"
+          10.27.112.56: "lxcwp41"
+          10.27.112.57: "lxcwp42"
+          10.27.112.58: "lxcwp43"
+
+    - name: Set the correct hostname using hostnamectl
+      command: hostnamectl set-hostname "{{ hostname_mapping[ansible_host] }}"
+
+    - name: Update /etc/hostname with the correct hostname
+      copy:
+        content: "{{ hostname_mapping[ansible_host] }}\n"
+        dest: /etc/hostname
+
+    - name: Ensure /etc/hosts has the correct hostname
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1 {{ hostname_mapping[ansible_host] }}"
+        state: present
+
+    - name: Reboot the server to apply hostname changes
+      reboot:
+        reboot_timeout: 300
+
+    - name: Verify hostname is set correctly
+      command: hostname
+      register: hostname_output
+
+    - name: Assert hostname matches expected value
+      assert:
+        that:
+          - hostname_output.stdout == hostname_mapping[ansible_host]
+        fail_msg: "Hostname does not match expected value {{ hostname_mapping[ansible_host] }}."
+        success_msg: "Hostname is correctly set to {{ hostname_mapping[ansible_host] }}."
+
+    - name: Download Wazuh agent
+      shell: wget https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.11.0-1_amd64.deb
+      args:
+        executable: /bin/bash
+
+    - name: Validate the Wazuh agent package
+      stat:
+        path: wazuh-agent_4.11.0-1_amd64.deb
+      register: wazuh_agent_deb_stat
+
+    - name: Fail if Wazuh agent download failed
+      fail:
+        msg: "Wazuh agent download failed. The .deb file is not valid."
+      when: wazuh_agent_deb_stat.stat.size < 1024
+
+    - name: Install Wazuh agent
+      shell: WAZUH_MANAGER='10.27.112.225' WAZUH_AGENT_NAME='{{ hostname_mapping[ansible_host] }}' dpkg -i ./wazuh-agent_4.11.0-1_amd64.deb
+      args:
+        executable: /bin/bash
+      register: wazuh_install
+      changed_when: "'WAZUH_AGENT_NAME' in wazuh_install.stdout"
+
+    - name: Reload systemd daemon
+      shell: systemctl daemon-reload
+#      args:
+#        warn: false
