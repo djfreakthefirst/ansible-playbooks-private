@@ -72,7 +72,7 @@
         line: "10.27.112.209:/export/bhdata /bhdata nfs rw,resvport,timeo=14 0 0"
         create: yes
 
-#    - name: Mount all filesystems mentioned in fstab WITH MORE TEST CHANGES
+#    - name: Mount all filesystems mentioned in fstab
 #      command: mount -a
 
     - name: Install Postfix and Postfix Utilities
