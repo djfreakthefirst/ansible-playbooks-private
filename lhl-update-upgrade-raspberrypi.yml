@@ -1,0 +1,66 @@
+- name: Update, upgrade, and reboot Raspberry Pi OS servers
+  hosts: all
+  become: yes
+  serial: 1
+  vars:
+    email_body: ""
+
+  tasks:
+
+    - name: Pause to avoid simultaneous updates
+      pause:
+        seconds: "{{ 30 | random(seed=inventory_hostname) }}"
+
+    - name: Install unattended-upgrades if not already installed
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Ensure unattended-upgrades is configured correctly for Raspberry Pi OS
+      copy:
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "Raspbian:{{ ansible_distribution_release }}-security";
+              "Raspbian:{{ ansible_distribution_release }}-updates";
+          };
+          Unattended-Upgrade::Package-Blacklist {
+              // "vim";
+          };
+          Unattended-Upgrade::Mail "root";
+          Unattended-Upgrade::MailOnlyOnError "true";
+          Unattended-Upgrade::Automatic-Reboot "true";
+          Unattended-Upgrade::Automatic-Reboot-Time "02:00";
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Update apt package list
+      apt:
+        update_cache: yes
+
+    - name: Upgrade all packages including distribution upgrades
+      apt:
+        upgrade: dist
+        force_apt_get: yes
+
+    - name: Install latest Raspberry Pi kernel updates
+      apt:
+        name: raspberrypi-kernel
+        state: latest
+        force_apt_get: yes
+
+    - name: Reboot the Raspberry Pi
+      reboot:
+        reboot_command: "shutdown -r now"
+        msg: "Reboot initiated by Ansible after update and upgrade"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+
+    - name: Build email body with results
+      set_fact:
+        email_body: "{{ email_body }}\n{{ item.item.name }}: {{ item.stdout_lines | join(' ') }}"
+      with_items: "{{ ansible_facts.packages | dict2items }}"
+      when: item.stdout_lines is defined
