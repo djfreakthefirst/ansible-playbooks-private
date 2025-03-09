@@ -1,0 +1,58 @@
+---
+- name: Deploy and configure Postfix
+  hosts: all
+  gather_facts: false
+  tasks:
+
+    - name: Install Postfix and Mail Utilities
+      apt:
+        name:
+          - postfix
+          - mailutils
+        state: present
+
+    - name: Configure Postfix main.cf
+      blockinfile:
+        path: /etc/postfix/main.cf
+        block: |
+          relayhost = [smtp.gmail.com]:587
+          smtp_sasl_auth_enable = yes
+          smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+          smtp_sasl_security_options = noanonymous
+          smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+          smtp_use_tls = yes
+      notify: Restart Postfix
+
+    - name: Set Postfix SMTP credentials in sasl_passwd
+      copy:
+        dest: /etc/postfix/sasl_passwd
+        content: |
+          [smtp.gmail.com]:587 evan@certifiedmactech.com:xbmm uzpz tnjj pwbm
+        mode: '0600'
+
+    - name: Verify sasl_passwd file creation
+      stat:
+        path: /etc/postfix/sasl_passwd
+      register: sasl_passwd_file
+
+    - name: Fail if sasl_passwd file is not found
+      fail:
+        msg: "sasl_passwd file was not created!"
+      when: not sasl_passwd_file.stat.exists
+
+    - name: Hash the Postfix sasl_passwd file
+      command: postmap /etc/postfix/sasl_passwd
+      when: sasl_passwd_file.stat.exists
+      notify: Restart Postfix
+
+    - name: Set permissions on sasl_passwd.db file
+      file:
+        path: /etc/postfix/sasl_passwd.db
+        mode: '0600'
+      when: sasl_passwd_file.stat.exists
+
+  handlers:
+    - name: Restart Postfix
+      service:
+        name: postfix
+        state: restarted
